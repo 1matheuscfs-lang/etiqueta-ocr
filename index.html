@@ -1,160 +1,192 @@
 <!doctype html>
 <html lang="pt-br">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Leitor de Etiqueta</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Leitor de Etiqueta (Diagnóstico)</title>
 
-  <!-- OCR -->
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <!-- OpenCV (detecção das caixas) -->
-  <script async src="https://docs.opencv.org/4.x/opencv.js"
-          onload="cv['onRuntimeInitialized']=()=>window.__cvReady=true;"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script async src="https://docs.opencv.org/4.x/opencv.js"
+        onload="cv['onRuntimeInitialized']=()=>window.__cvReady=true;"></script>
 
-  <style>
-    body { font-family: system-ui, Arial, sans-serif; margin: 16px; }
-    video, canvas { width: 100%; max-width: 460px; border-radius: 12px; }
-    button { padding: 12px 16px; margin: 8px 4px 0 0; border-radius: 10px; border: 1px solid #ccc; background:#f7f7f7; }
-    .mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; white-space: pre-wrap; }
-  </style>
+<style>
+  body { font-family: system-ui, Arial, sans-serif; margin: 16px; }
+  video, canvas { width: 100%; max-width: 460px; border-radius: 12px; }
+  button { padding: 12px 16px; margin: 8px 4px 0 0; border-radius: 10px; border: 1px solid #ccc; background:#f7f7f7; }
+  .mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; white-space: pre-wrap; }
+  .ok { color: #156b2b; } .err { color: #a11313; } .info { color: #444; }
+</style>
 </head>
 <body>
-  <h1>Leitor de Etiqueta</h1>
-  <video id="video" autoplay playsinline></video>
-  <canvas id="canvas" style="display:none;"></canvas>
+<h1>Leitor de Etiqueta</h1>
+<video id="video" autoplay playsinline></video>
+<canvas id="canvas" style="display:none;"></canvas>
 
-  <div>
-    <button id="btnStart">Ativar câmera</button>
-    <button id="btnScan">Capturar & Enviar</button>
-  </div>
+<div>
+  <button id="btnStart">Ativar câmera</button>
+  <button id="btnScan">Capturar & Enviar</button>
+  <button id="btnPing">Teste servidor</button>
+</div>
 
-  <div><strong>Saída:</strong><div id="out" class="mono"></div></div>
+<div><strong>Log:</strong><div id="log" class="mono"></div></div>
 
 <script>
-  // Já preenchido com a sua URL do WebApp
-  const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyVpsPqVbX1nVS9DgiheGB7Vs343lw5M3kQj8PUkMbal2hA2JQ-zFGWqSpLcfGSbbTz/exec';
-  const SEGREDO = 'SIRROS_2025_08_OCR_01';
+const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzr4wHMP4jqypAfG_cG-up7PTU-SSav16GC4KAOCDh19KbAFXRHGy5NJGT8PwQXR7Or/exec';
+const SEGREDO = 'SIRROS_2025_08_OCR_01';
 
-  // Listas na MESMA ordem da etiqueta (linhas)
-  const PECAS = [
-    "Turbocompressores","caixas de direção","câmbios automáticos","motores de partida",
-    "alternadores","bombas de alta pressão","bicos injetores diesel",
-    "compressores de ar-condicionado","diferenciais traseiros","conversores de torque"
-  ];
-  const MODELOS = ["Fiat","Peugeot","Citroen","RAM","Jeep"];
-  const ANOS = ["2014","2015","2016","2017","2018","2019","2020","2021","2022","2023","2024","2025"];
+const PECAS = [
+  "Turbocompressores","caixas de direção","câmbios automáticos","motores de partida",
+  "alternadores","bombas de alta pressão","bicos injetores diesel",
+  "compressores de ar-condicionado","diferenciais traseiros","conversores de torque"
+];
+const MODELOS = ["Fiat","Peugeot","Citroen","RAM","Jeep"];
+const ANOS = ["2014","2015","2016","2017","2018","2019","2020","2021","2022","2023","2024","2025"];
 
-  const video = document.getElementById('video');
-  const canvas = document.getElementById('canvas');
-  const out = document.getElementById('out');
+const logEl = document.getElementById('log');
+function log(msg, cls='info'){ const d=document.createElement('div'); d.textContent=msg; d.className=cls; logEl.appendChild(d); }
 
-  async function waitCvReady() {
-    if (window.__cvReady) return;
-    await new Promise(r => {
-      const h = setInterval(() => { if (window.__cvReady) { clearInterval(h); r(); } }, 50);
-    });
-  }
+async function waitCvReady() {
+  if (window.__cvReady) return;
+  log('Aguardando OpenCV...', 'info');
+  await new Promise(r => { const h=setInterval(()=>{ if(window.__cvReady){clearInterval(h); r();}}, 50);});
+  log('OpenCV pronto.', 'ok');
+}
 
-  async function startCamera() {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: 'environment' } }, audio: false
-    });
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+
+async function startCamera() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio:false });
     video.srcObject = stream;
     await video.play();
+    log('Câmera ativada.', 'ok');
+  } catch(e) {
+    log('Falha ao ativar câmera: '+String(e), 'err');
+  }
+}
+
+function snapshotToCanvas() {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh) throw new Error('Vídeo não inicializado');
+  canvas.width = vw; canvas.height = vh;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0, vw, vh);
+  return canvas;
+}
+
+function extractCodigoViaOCRText(text) {
+  const m = text.match(/\b(\d{4,})\b/);
+  return m ? m[1] : '';
+}
+
+function detectSelections(mat) {
+  const W = mat.cols, H = mat.rows;
+  const gray = new cv.Mat(); cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY);
+  const binInv = new cv.Mat(); cv.threshold(gray, binInv, 180, 255, cv.THRESH_BINARY_INV);
+  const contours = new cv.MatVector(), hierarchy = new cv.Mat();
+  cv.findContours(binInv, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+  const rects = [];
+  for (let i = 0; i < contours.size(); i++) {
+    const r = cv.boundingRect(contours.get(i));
+    const wFrac = r.width / W, hFrac = r.height / H;
+    if (wFrac > 0.015 && wFrac < 0.05 && hFrac > 0.04 && hFrac < 0.12) rects.push(r);
   }
 
-  function snapshotToCanvas() {
-    const vw = video.videoWidth, vh = video.videoHeight;
-    if (!vw || !vh) throw new Error('Vídeo não inicializado');
-    canvas.width = vw; canvas.height = vh;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(video, 0, 0, vw, vh);
-    return canvas;
+  const samples = new cv.Mat(rects.length, 1, cv.CV_32F);
+  rects.forEach((r, i) => samples.floatPtr(i,0)[0] = r.x + r.width/2);
+  const labels = new cv.Mat(), centers = new cv.Mat();
+  const criteria = new cv.TermCriteria(cv.TermCriteria_EPS + cv.TermCriteria_MAX_ITER, 20, 0.5);
+  cv.kmeans(samples, 3, labels, criteria, 5, cv.KMEANS_PP_CENTERS, centers);
+
+  const cols = []; for (let i=0;i<3;i++) cols.push({k:i, x: centers.floatPtr(i,0)[0]}); cols.sort((a,b)=>a.x-b.x);
+  const groups = { peca:[], modelo:[], ano:[] };
+  rects.forEach((r, i) => groups[['peca','modelo','ano'][cols.findIndex(t => t.k===labels.intPtr(i,0)[0])]].push(r));
+  for (const k of Object.keys(groups)) groups[k].sort((a,b)=>a.y-b.y);
+  const yCut = H * 0.12; // remove o quadrado do cabeçalho "Modelo"
+  groups.modelo = groups.modelo.filter(r => r.y > yCut);
+
+  function isChecked(r) {
+    const roi = binInv.roi(new cv.Rect(r.x, r.y, r.width, r.height));
+    const padX = Math.floor(r.width * 0.2), padY = Math.floor(r.height * 0.2);
+    const inner = roi.roi(new cv.Rect(padX, padY, r.width - 2*padX, r.height - 2*padY));
+    const mean = cv.mean(inner)[0] / 255.0; inner.delete(); roi.delete();
+    return mean >= 0.20; // limiar de preenchimento
   }
+  function pick(list, names){ const i=list.findIndex(isChecked); return i>=0 ? names[i] : ''; }
 
-  function extractCodigoViaOCRText(text) {
-    const m = text.match(/\b(\d{4,})\b/);
-    return m ? m[1] : '';
-  }
+  const result = {
+    peca: pick(groups.peca, PECAS),
+    modelo: pick(groups.modelo, MODELOS),
+    ano: pick(groups.ano, ANOS)
+  };
 
-  function detectSelections(mat) {
-    const W = mat.cols, H = mat.rows;
-    const gray = new cv.Mat(); cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY);
-    const binInv = new cv.Mat(); cv.threshold(gray, binInv, 180, 255, cv.THRESH_BINARY_INV);
+  gray.delete(); binInv.delete(); contours.delete(); hierarchy.delete(); samples.delete(); labels.delete(); centers.delete();
+  return result;
+}
 
-    const contours = new cv.MatVector(), hierarchy = new cv.Mat();
-    cv.findContours(binInv, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-    const rects = [];
-    for (let i = 0; i < contours.size(); i++) {
-      const r = cv.boundingRect(contours.get(i));
-      const wFrac = r.width / W, hFrac = r.height / H;
-      if (wFrac > 0.015 && wFrac < 0.05 && hFrac > 0.04 && hFrac < 0.12) rects.push(r);
-    }
-
-    // Cluster em 3 colunas (x-center): peça, modelo, ano
-    const samples = new cv.Mat(rects.length, 1, cv.CV_32F);
-    rects.forEach((r, i) => samples.floatPtr(i,0)[0] = r.x + r.width/2);
-    const labels = new cv.Mat(), centers = new cv.Mat();
-    const criteria = new cv.TermCriteria(cv.TermCriteria_EPS + cv.TermCriteria_MAX_ITER, 20, 0.5);
-    cv.kmeans(samples, 3, labels, criteria, 5, cv.KMEANS_PP_CENTERS, centers);
-
-    const cols = []; for (let i=0;i<3;i++) cols.push({k:i, x: centers.floatPtr(i,0)[0]}); cols.sort((a,b)=>a.x-b.x);
-    const groups = { peca:[], modelo:[], ano:[] };
-    rects.forEach((r, i) => groups[['peca','modelo','ano'][cols.findIndex(t => t.k===labels.intPtr(i,0)[0])]].push(r));
-    for (const k of Object.keys(groups)) groups[k].sort((a,b)=>a.y-b.y);
-    const yCut = H * 0.12; // remove quadrado do cabeçalho "Modelo"
-    groups.modelo = groups.modelo.filter(r => r.y > yCut);
-
-    function isChecked(r) {
-      const roi = binInv.roi(new cv.Rect(r.x, r.y, r.width, r.height));
-      const padX = Math.floor(r.width * 0.2), padY = Math.floor(r.height * 0.2);
-      const inner = roi.roi(new cv.Rect(padX, padY, r.width - 2*padX, r.height - 2*padY));
-      const mean = cv.mean(inner)[0] / 255.0; inner.delete(); roi.delete();
-      return mean >= 0.20; // 20% da área interna preenchida = marcado
-    }
-    function pick(list, names){ const i=list.findIndex(isChecked); return i>=0 ? names[i] : ''; }
-
-    const result = {
-      peca: pick(groups.peca, PECAS),
-      modelo: pick(groups.modelo, MODELOS),
-      ano: pick(groups.ano, ANOS)
-    };
-
-    gray.delete(); binInv.delete(); contours.delete(); hierarchy.delete(); samples.delete(); labels.delete(); centers.delete();
-    return result;
-  }
-
-  async function scanAndSend() {
-    out.textContent = 'Processando...';
+async function scanAndSend() {
+  logEl.textContent = '';
+  try {
     await waitCvReady();
     const cnv = snapshotToCanvas();
+    log('Snapshot ok.', 'ok');
 
     const mat = cv.imread(cnv);
     const sel = detectSelections(mat);
     mat.delete();
+    log(`Detecção: Peça=${sel.peca} | Modelo=${sel.modelo} | Ano=${sel.ano}`, 'ok');
 
+    log('Rodando OCR...', 'info');
     const { data: { text } } = await Tesseract.recognize(cnv, 'por');
     const codigo = extractCodigoViaOCRText(text);
-
-    out.textContent =
-      `Peça: ${sel.peca}\nModelo: ${sel.modelo}\nAno: ${sel.ano}\nCódigo: ${codigo}\n`;
+    log(`Código OCR: ${codigo || '(não encontrado)'}`, codigo ? 'ok' : 'info');
 
     const payload = { ...sel, codigo, secret: SEGREDO };
+    log('Enviando para WebApp...', 'info');
+
+    // Evita preflight CORS
     const res = await fetch(APPS_SCRIPT_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(payload),
+      mode: 'cors'
     });
-    const json = await res.json();
-    if (!json.ok) throw new Error('Falha no envio: ' + JSON.stringify(json));
-    out.textContent += `\n✅ Gravado na planilha.`;
-  }
 
-  document.getElementById('btnStart').onclick = startCamera;
-  document.getElementById('btnScan').onclick = () => scanAndSend().catch(err => {
-    console.error(err); out.textContent = 'Erro: ' + String(err);
-  });
+    const ct = res.headers.get('content-type') || '';
+    const bodyText = await res.text();
+    log(`HTTP ${res.status} | content-type: ${ct}`, res.ok ? 'ok' : 'err');
+    log(`Resposta (texto cru): ${bodyText.slice(0, 300)}`, 'info');
+
+    if (ct.includes('application/json')) {
+      const j = JSON.parse(bodyText);
+      if (!j.ok) throw new Error('Servidor retornou erro: ' + JSON.stringify(j));
+      log('✅ Gravado na planilha.', 'ok');
+    } else {
+      log('⚠️ Resposta não-JSON. Verifique a planilha (provável sucesso).', 'info');
+    }
+
+  } catch (e) {
+    log('ERRO: ' + String(e), 'err');
+  }
+}
+
+async function pingServer() {
+  logEl.textContent = '';
+  try {
+    const res = await fetch(APPS_SCRIPT_URL, { method: 'GET' });
+    const txt = await res.text();
+    log(`Ping HTTP ${res.status}`, res.ok ? 'ok' : 'err');
+    log(`Corpo: ${txt.slice(0, 300)}`, 'info');
+  } catch(e) {
+    log('Ping falhou: ' + String(e), 'err');
+  }
+}
+
+document.getElementById('btnStart').onclick = startCamera;
+document.getElementById('btnScan').onclick = scanAndSend;
+document.getElementById('btnPing').onclick = pingServer;
 </script>
 </body>
 </html>
